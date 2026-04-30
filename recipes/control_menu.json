@@ -1,0 +1,43 @@
+{
+  "name": "Control Menu",
+  "actions": [
+    {
+      "id": "choice",
+      "kind": "choose_from_menu",
+      "prompt": "Choose a destination",
+      "items": [
+        "Apple",
+        "OpenAI"
+      ]
+    },
+    {
+      "kind": "menu_item",
+      "group": "choice",
+      "title": "Apple"
+    },
+    {
+      "kind": "url",
+      "url": "https://www.apple.com"
+    },
+    {
+      "kind": "open_url"
+    },
+    {
+      "kind": "menu_item",
+      "group": "choice",
+      "title": "OpenAI"
+    },
+    {
+      "kind": "url",
+      "url": "https://www.openai.com"
+    },
+    {
+      "kind": "open_url"
+    },
+    {
+      "kind": "end_menu",
+      "group": "choice"
+    }
+  ]
+}
+

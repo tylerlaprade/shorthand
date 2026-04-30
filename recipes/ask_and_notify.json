@@ -1,0 +1,24 @@
+{
+  "name": "Ask and Notify",
+  "actions": [
+    {
+      "id": "answer",
+      "kind": "ask_for_input",
+      "prompt": "What should I remember?"
+    },
+    {
+      "kind": "notification",
+      "title": "Captured",
+      "body": {
+        "ref": "answer"
+      }
+    },
+    {
+      "kind": "show_result",
+      "text": {
+        "ref": "answer"
+      }
+    }
+  ]
+}
+

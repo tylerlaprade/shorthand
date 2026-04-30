@@ -1,0 +1,27 @@
+{
+  "name": "Dictionary Result",
+  "actions": [
+    {
+      "id": "now",
+      "kind": "current_date"
+    },
+    {
+      "id": "payload",
+      "kind": "dictionary",
+      "items": {
+        "source": "Shorthand",
+        "created_at": {
+          "ref": "now"
+        },
+        "status": "draft"
+      }
+    },
+    {
+      "kind": "show_result",
+      "text": {
+        "ref": "payload"
+      }
+    }
+  ]
+}
+

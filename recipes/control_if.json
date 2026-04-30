@@ -1,0 +1,36 @@
+{
+  "name": "Control If",
+  "actions": [
+    {
+      "id": "answer",
+      "kind": "ask_for_input",
+      "prompt": "Type yes or no"
+    },
+    {
+      "id": "yes_check",
+      "kind": "if",
+      "input": {
+        "ref": "answer"
+      },
+      "condition": "Contains",
+      "value": "yes"
+    },
+    {
+      "kind": "text",
+      "text": "You said yes."
+    },
+    {
+      "kind": "otherwise",
+      "group": "yes_check"
+    },
+    {
+      "kind": "text",
+      "text": "You did not say yes."
+    },
+    {
+      "kind": "end_if",
+      "group": "yes_check"
+    }
+  ]
+}
+

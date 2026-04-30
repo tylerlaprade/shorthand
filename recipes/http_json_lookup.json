@@ -1,0 +1,36 @@
+{
+  "name": "HTTP JSON Lookup",
+  "actions": [
+    {
+      "id": "response",
+      "kind": "get_contents_of_url",
+      "url": "https://api.github.com",
+      "method": "GET",
+      "headers": {
+        "Accept": "application/json"
+      }
+    },
+    {
+      "id": "json",
+      "kind": "get_dictionary_from_input",
+      "input": {
+        "ref": "response"
+      }
+    },
+    {
+      "id": "current_user_url",
+      "kind": "get_dictionary_value",
+      "input": {
+        "ref": "json"
+      },
+      "key": "current_user_url"
+    },
+    {
+      "kind": "show_result",
+      "text": {
+        "ref": "current_user_url"
+      }
+    }
+  ]
+}
+

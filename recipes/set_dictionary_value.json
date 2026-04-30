@@ -1,0 +1,28 @@
+{
+  "name": "Set Dictionary Value",
+  "actions": [
+    {
+      "id": "payload",
+      "kind": "dictionary",
+      "items": {
+        "status": "draft"
+      }
+    },
+    {
+      "id": "updated",
+      "kind": "set_dictionary_value",
+      "input": {
+        "ref": "payload"
+      },
+      "key": "status",
+      "value": "ready"
+    },
+    {
+      "kind": "show_result",
+      "text": {
+        "ref": "updated"
+      }
+    }
+  ]
+}
+

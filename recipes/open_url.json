@@ -1,0 +1,13 @@
+{
+  "name": "Open URL",
+  "actions": [
+    {
+      "kind": "url",
+      "url": "https://www.apple.com"
+    },
+    {
+      "kind": "open_url"
+    }
+  ]
+}
+

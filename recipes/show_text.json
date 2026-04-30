@@ -1,0 +1,13 @@
+{
+  "name": "Show Text",
+  "actions": [
+    {
+      "kind": "text",
+      "text": "Hello from Shorthand"
+    },
+    {
+      "kind": "show_result"
+    }
+  ]
+}
+

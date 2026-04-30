@@ -1,0 +1,20 @@
+{
+  "name": "Control Repeat",
+  "actions": [
+    {
+      "id": "loop",
+      "kind": "repeat_count",
+      "count": 3
+    },
+    {
+      "kind": "notification",
+      "title": "Repeating",
+      "body": "This notification is inside a repeat block."
+    },
+    {
+      "kind": "end_repeat",
+      "group": "loop"
+    }
+  ]
+}
+

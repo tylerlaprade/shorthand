@@ -1,0 +1,13 @@
+{
+  "name": "Copy Text",
+  "actions": [
+    {
+      "kind": "text",
+      "text": "Hello from Shorthand"
+    },
+    {
+      "kind": "set_clipboard"
+    }
+  ]
+}
+

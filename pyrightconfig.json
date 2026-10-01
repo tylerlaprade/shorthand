@@ -1,0 +1,5 @@
+{
+  "extends": "../../.config/basedpyright/pyrightconfig.json",
+  "include": ["shortcutgen", "tests"],
+  "pythonVersion": "3.9"
+}

@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, TypedDict
 
+from .json_data import json_object, parse_json
 from .validation import SUPPORTED_KINDS, validate_recipe
 
+if TYPE_CHECKING:
+    from .json_data import JsonObject
 
-ACTION_SPECS: dict[str, dict[str, Any]] = {
+
+class ActionSpec(TypedDict):
+    description: str
+    required: list[str]
+    optional: list[str]
+
+
+ACTION_SPECS: dict[str, ActionSpec] = {
     "alert": {
         "description": "Show an alert with a title and optional message.",
         "required": ["title"],
@@ -138,19 +148,19 @@ ACTION_SPECS: dict[str, dict[str, Any]] = {
 
 @dataclass(frozen=True)
 class ModelResponse:
-    recipe: dict[str, Any]
+    recipe: JsonObject
     unsupported: bool = False
     reason: str | None = None
 
 
-def action_catalog() -> dict[str, Any]:
+def action_catalog() -> dict[str, ActionSpec]:
     missing_specs = sorted(SUPPORTED_KINDS - frozenset(ACTION_SPECS))
     if missing_specs:
         raise ValueError(f"Missing prompt specs for action kinds: {', '.join(missing_specs)}")
     return {kind: ACTION_SPECS[kind] for kind in sorted(SUPPORTED_KINDS)}
 
 
-def recipe_contract() -> dict[str, Any]:
+def recipe_contract() -> dict[str, object]:
     return {
         "output": "Return exactly one JSON object and no Markdown.",
         "recipe": {
@@ -179,7 +189,7 @@ def recipe_contract() -> dict[str, Any]:
     }
 
 
-def build_prompt(user_request: str, examples: list[dict[str, Any]] | None = None) -> str:
+def build_prompt(user_request: str, examples: list[JsonObject] | None = None) -> str:
     request = user_request.strip()
     if not request:
         raise ValueError("User request must be a non-empty string")
@@ -218,12 +228,11 @@ def parse_model_response(raw_response: str) -> ModelResponse:
         raise ValueError("Model response is empty")
 
     try:
-        recipe = json.loads(response)
+        decoded = parse_json(response)
     except json.JSONDecodeError as error:
         raise ValueError("Model response must be exactly one JSON object with no Markdown") from error
 
-    if not isinstance(recipe, dict):
-        raise ValueError("Model response must be a JSON object")
+    recipe = json_object(decoded, "Model response must be a JSON object")
 
     if recipe.get("unsupported") is True:
         reason = recipe.get("reason")

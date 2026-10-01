@@ -7,13 +7,33 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from .actions import ActionContext, action_from_recipe
+from .json_data import json_object, parse_json
 from .prompting import build_prompt, parse_model_response
 from .system_intents import DEFAULT_ACTIONS_INTENTDEFINITION, system_intent_catalog
 from .validation import ValidationError, validate_recipe
 from .workflow import Shortcut
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .json_data import JsonObject
+    from .workflow import Action
+
+
+class CliArguments(argparse.Namespace):
+    command: str
+    recipe: Path
+    response: Path
+    shortcut_output: Path
+    output: Path | None
+    sign: bool
+    sign_mode: str
+    request: str
+    example: list[Path]
+    source: Path
 
 
 def main() -> int:
@@ -28,12 +48,23 @@ def main() -> int:
 
 
 def run() -> int:
+    parser = build_parser()
+    args = parser.parse_args(namespace=CliArguments())
+    handler = COMMAND_HANDLERS.get(args.command)
+    if handler is None:
+        parser.error(f"Unknown command: {args.command}")
+    return handler(args)
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="shortcutgen")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     compile_parser = subparsers.add_parser("compile", help="Compile a recipe JSON file")
     compile_parser.add_argument("recipe", type=Path)
-    compile_parser.add_argument("--output", "-o", type=Path, required=True)
+    compile_parser.add_argument(
+        "--output", "-o", dest="shortcut_output", metavar="OUTPUT", type=Path, required=True
+    )
     compile_parser.add_argument("--sign", action="store_true")
     compile_parser.add_argument(
         "--sign-mode",
@@ -46,7 +77,9 @@ def run() -> int:
         help="Compile a raw model response JSON file",
     )
     compile_response_parser.add_argument("response", type=Path)
-    compile_response_parser.add_argument("--output", "-o", type=Path, required=True)
+    compile_response_parser.add_argument(
+        "--output", "-o", dest="shortcut_output", metavar="OUTPUT", type=Path, required=True
+    )
     compile_response_parser.add_argument("--sign", action="store_true")
     compile_response_parser.add_argument(
         "--sign-mode",
@@ -82,40 +115,28 @@ def run() -> int:
     )
     system_intents_parser.add_argument("--output", "-o", type=Path)
 
-    args = parser.parse_args()
+    return parser
 
-    if args.command == "compile":
-        return compile_recipe(args.recipe, args.output, args.sign, args.sign_mode)
 
-    if args.command == "compile-response":
-        return compile_response(args.response, args.output, args.sign, args.sign_mode)
+def validate_recipe_file(recipe_path: Path) -> int:
+    validate_recipe(load_recipe(recipe_path))
+    print(f"Valid recipe: {recipe_path}")
+    return 0
 
-    if args.command == "prompt":
-        return write_prompt(args.request, args.example, args.output)
 
-    if args.command == "validate":
-        validate_recipe(load_recipe(args.recipe))
-        print(f"Valid recipe: {args.recipe}")
-        return 0
-
-    if args.command == "validate-response":
-        response = parse_model_response(args.response.read_text(encoding="utf-8"))
-        if response.unsupported:
-            print(f"Unsupported response: {response.reason}")
-        else:
-            print(f"Valid response: {args.response}")
-        return 0
-
-    if args.command == "system-intents":
-        return write_system_intents(args.source, args.output)
-
-    parser.error(f"Unknown command: {args.command}")
-    return 2
+def validate_response_file(response_path: Path) -> int:
+    response = parse_model_response(response_path.read_text(encoding="utf-8"))
+    if response.unsupported:
+        print(f"Unsupported response: {response.reason}")
+    else:
+        print(f"Valid response: {response_path}")
+    return 0
 
 
 def compile_recipe(
     recipe_path: Path,
     output_path: Path,
+    *,
     should_sign: bool,
     sign_mode: str,
 ) -> int:
@@ -138,6 +159,7 @@ def compile_recipe(
 def compile_response(
     response_path: Path,
     output_path: Path,
+    *,
     should_sign: bool,
     sign_mode: str,
 ) -> int:
@@ -184,17 +206,13 @@ def write_system_intents(source_path: Path, output_path: Path | None) -> int:
     return 0
 
 
-def load_recipe(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
-
-    if not isinstance(data, dict):
-        raise ValueError("Recipe root must be a JSON object")
-
-    return data
+def load_recipe(path: Path) -> JsonObject:
+    return json_object(
+        parse_json(path.read_text(encoding="utf-8")), "Recipe root must be a JSON object"
+    )
 
 
-def shortcut_from_recipe(recipe: dict[str, Any]) -> Shortcut:
+def shortcut_from_recipe(recipe: JsonObject) -> Shortcut:
     name = recipe.get("name")
     if not isinstance(name, str) or not name:
         raise ValueError("Recipe is missing non-empty string field 'name'")
@@ -203,12 +221,14 @@ def shortcut_from_recipe(recipe: dict[str, Any]) -> Shortcut:
     if not isinstance(action_specs, list) or not action_specs:
         raise ValueError("Recipe is missing non-empty array field 'actions'")
 
-    actions = []
+    actions: list[Action] = []
     context = ActionContext()
     for index, spec in enumerate(action_specs):
-        if not isinstance(spec, dict):
-            raise ValueError(f"Action at index {index} must be an object")
-        actions.append(action_from_recipe(spec, context))
+        actions.append(
+            action_from_recipe(
+                json_object(spec, f"Action at index {index} must be an object"), context
+            )
+        )
 
     return Shortcut(name=name, actions=actions)
 
@@ -233,3 +253,17 @@ def sign_shortcut(input_path: Path, output_path: Path, mode: str) -> None:
         check=True,
     )
     shutil.move(str(temporary_output), output_path)
+
+
+COMMAND_HANDLERS: dict[str, Callable[[CliArguments], int]] = {
+    "compile": lambda args: compile_recipe(
+        args.recipe, args.shortcut_output, should_sign=args.sign, sign_mode=args.sign_mode
+    ),
+    "compile-response": lambda args: compile_response(
+        args.response, args.shortcut_output, should_sign=args.sign, sign_mode=args.sign_mode
+    ),
+    "prompt": lambda args: write_prompt(args.request, args.example, args.output),
+    "validate": lambda args: validate_recipe_file(args.recipe),
+    "validate-response": lambda args: validate_response_file(args.response),
+    "system-intents": lambda args: write_system_intents(args.source, args.output),
+}

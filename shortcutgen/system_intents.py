@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
+from .json_data import json_object, parse_json
+
+if TYPE_CHECKING:
+    from .json_data import JsonObject, JsonValue
 
 DEFAULT_ACTIONS_INTENTDEFINITION = Path(
     "/System/Library/PrivateFrameworks/WorkflowKit.framework/"
@@ -12,50 +15,55 @@ DEFAULT_ACTIONS_INTENTDEFINITION = Path(
 )
 
 
-def load_intentdefinition(path: Path = DEFAULT_ACTIONS_INTENTDEFINITION) -> dict[str, Any]:
+def load_intentdefinition(path: Path = DEFAULT_ACTIONS_INTENTDEFINITION) -> JsonObject:
     result = subprocess.run(
         ["plutil", "-convert", "json", "-o", "-", str(path)],
         check=True,
         capture_output=True,
         text=True,
     )
-    data = json.loads(result.stdout)
-    if not isinstance(data, dict):
-        raise ValueError(f"Intent definition at {path} did not contain a JSON object")
-    return data
+    return json_object(
+        parse_json(result.stdout),
+        f"Intent definition at {path} did not contain a JSON object",
+    )
 
 
 def system_intent_catalog(
     path: Path = DEFAULT_ACTIONS_INTENTDEFINITION,
-) -> dict[str, Any]:
+) -> JsonObject:
     return catalog_from_intentdefinition(load_intentdefinition(path), path)
 
 
+def objects_in(value: JsonValue) -> list[JsonObject]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def catalog_from_intentdefinition(
-    definition: dict[str, Any],
+    definition: JsonObject,
     source_path: Path | None = None,
-) -> dict[str, Any]:
-    enums = {enum["INEnumName"]: compact_enum(enum) for enum in definition.get("INEnums", [])}
-    intents = [
-        compact_intent(intent, enums)
-        for intent in definition.get("INIntents", [])
-        if isinstance(intent, dict)
+) -> JsonObject:
+    enums = {
+        str(enum["INEnumName"]): compact_enum(enum)
+        for enum in objects_in(definition.get("INEnums", []))
+    }
+    intents: list[JsonObject] = [
+        compact_intent(intent, enums) for intent in objects_in(definition.get("INIntents", []))
     ]
-    intents.sort(key=lambda intent: intent["name"])
+    intents.sort(key=lambda intent: str(intent["name"]))
 
     return {
         "source_path": str(source_path) if source_path is not None else None,
         "namespace": definition.get("INIntentDefinitionNamespace"),
         "intent_count": len(intents),
-        "intents": intents,
+        "intents": [*intents],
     }
 
 
-def compact_enum(enum: dict[str, Any]) -> dict[str, Any]:
-    values = []
-    for value in enum.get("INEnumValues", []):
-        if not isinstance(value, dict):
-            continue
+def compact_enum(enum: JsonObject) -> JsonObject:
+    values: list[JsonValue] = []
+    for value in objects_in(enum.get("INEnumValues", [])):
         name = value.get("INEnumValueName")
         if name == "unknown":
             continue
@@ -74,7 +82,10 @@ def compact_enum(enum: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compact_intent(intent: dict[str, Any], enums: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def compact_intent(intent: JsonObject, enums: dict[str, JsonObject]) -> JsonObject:
+    response = json_object(
+        intent.get("INIntentResponse") or {}, "Intent field 'INIntentResponse' must be an object"
+    )
     return {
         "name": intent.get("INIntentName"),
         "title": intent.get("INIntentTitle"),
@@ -82,21 +93,20 @@ def compact_intent(intent: dict[str, Any], enums: dict[str, dict[str, Any]]) -> 
         "category": intent.get("INIntentCategory"),
         "verb": intent.get("INIntentVerb"),
         "input": intent.get("INIntentInput"),
-        "output": (intent.get("INIntentResponse") or {}).get("INIntentResponseOutput"),
+        "output": response.get("INIntentResponseOutput"),
         "parameters": [
             compact_parameter(parameter, enums)
-            for parameter in intent.get("INIntentParameters", [])
-            if isinstance(parameter, dict)
+            for parameter in objects_in(intent.get("INIntentParameters", []))
         ],
     }
 
 
 def compact_parameter(
-    parameter: dict[str, Any],
-    enums: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
+    parameter: JsonObject,
+    enums: dict[str, JsonObject],
+) -> JsonObject:
     enum_name = parameter.get("INIntentParameterEnumType")
-    compact: dict[str, Any] = {
+    compact: JsonObject = {
         "name": parameter.get("INIntentParameterName"),
         "display": parameter.get("INIntentParameterDisplayName"),
         "type": parameter.get("INIntentParameterType"),

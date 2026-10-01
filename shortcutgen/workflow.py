@@ -3,15 +3,22 @@ from __future__ import annotations
 import plistlib
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Union
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .json_data import JsonValue
+
+PlistValue = Union[dict[str, "PlistValue"], list["PlistValue"], str, int, float, bool]
+PlistObject = dict[str, PlistValue]
 
 
 def new_action_uuid() -> str:
     return str(uuid.uuid4()).upper()
 
 
-def action_output_token(output_uuid: str, output_name: str) -> dict[str, Any]:
+def action_output_token(output_uuid: str, output_name: str) -> PlistObject:
     return {
         "Value": {
             "attachmentsByRange": {
@@ -21,7 +28,7 @@ def action_output_token(output_uuid: str, output_name: str) -> dict[str, Any]:
                     "Type": "ActionOutput",
                 }
             },
-            "string": "\ufffc",
+            "string": "￼",
         },
         "WFSerializationType": "WFTextTokenString",
     }
@@ -33,29 +40,41 @@ class OutputRef:
     output_name: str | None = None
 
 
+ParameterValue = Union[
+    "JsonValue", OutputRef, dict[str, "ParameterValue"], list["ParameterValue"]
+]
+Parameters = dict[str, ParameterValue]
+
+
 @dataclass(frozen=True)
 class Action:
     identifier: str
-    parameters: dict[str, Any] = field(default_factory=dict)
+    parameters: Parameters = field(default_factory=dict)
     recipe_id: str | None = None
     uuid: str = field(default_factory=new_action_uuid)
     output_name: str = "Output"
 
     def to_plist(
         self,
-        previous_action: "Action | None" = None,
-        actions_by_id: dict[str, "Action"] | None = None,
-    ) -> dict[str, Any]:
+        previous_action: Action | None = None,
+        actions_by_id: dict[str, Action] | None = None,
+    ) -> PlistObject:
         actions_by_id = actions_by_id or {}
-        parameters = resolve_parameter(self.parameters, actions_by_id)
+        parameters = {
+            key: resolve_parameter(value, actions_by_id)
+            for key, value in self.parameters.items()
+        }
         parameters.setdefault("UUID", self.uuid)
 
-        if self.identifier == "is.workflow.actions.showresult" and "Text" not in parameters:
-            if previous_action is not None:
-                parameters["Text"] = action_output_token(
-                    previous_action.uuid,
-                    previous_action.output_name,
-                )
+        if (
+            self.identifier == "is.workflow.actions.showresult"
+            and "Text" not in parameters
+            and previous_action is not None
+        ):
+            parameters["Text"] = action_output_token(
+                previous_action.uuid,
+                previous_action.output_name,
+            )
 
         return {
             "WFWorkflowActionIdentifier": self.identifier,
@@ -63,7 +82,7 @@ class Action:
         }
 
 
-def resolve_parameter(value: Any, actions_by_id: dict[str, Action]) -> Any:
+def resolve_parameter(value: ParameterValue, actions_by_id: dict[str, Action]) -> PlistValue:
     if isinstance(value, OutputRef):
         source = actions_by_id.get(value.action_id)
         if source is None:
@@ -79,6 +98,9 @@ def resolve_parameter(value: Any, actions_by_id: dict[str, Action]) -> Any:
     if isinstance(value, list):
         return [resolve_parameter(child, actions_by_id) for child in value]
 
+    if value is None:
+        raise ValueError("Shortcut action parameters cannot contain null")
+
     return value
 
 
@@ -89,9 +111,9 @@ class Shortcut:
     glyph_number: int = 59511
     start_color: int = 4282601983
 
-    def to_plist(self) -> dict[str, Any]:
+    def to_plist(self) -> PlistObject:
         actions_by_id = self.actions_by_id()
-        actions = []
+        actions: list[PlistValue] = []
         previous_action = None
         for action in self.actions:
             actions.append(action.to_plist(previous_action, actions_by_id))
@@ -114,7 +136,7 @@ class Shortcut:
         }
 
     def actions_by_id(self) -> dict[str, Action]:
-        actions_by_id = {}
+        actions_by_id: dict[str, Action] = {}
         for action in self.actions:
             if action.recipe_id is None:
                 continue
@@ -124,5 +146,6 @@ class Shortcut:
         return actions_by_id
 
     def write(self, path: Path) -> None:
+        plist = self.to_plist()
         with path.open("wb") as handle:
-            plistlib.dump(self.to_plist(), handle, fmt=plistlib.FMT_XML, sort_keys=False)
+            plistlib.dump(plist, handle, fmt=plistlib.FMT_XML, sort_keys=False)

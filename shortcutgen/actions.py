@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING
 
+from .json_data import UnexpectedJsonError, json_array, json_object
 from .workflow import Action, OutputRef, new_action_uuid
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .json_data import JsonObject, JsonValue
+    from .workflow import Parameters, ParameterValue
 
 
 @dataclass
@@ -31,7 +38,7 @@ class ActionContext:
         return self.group_end_identifiers.get(group, default)
 
 
-def spec_id(spec: dict[str, Any]) -> str | None:
+def spec_id(spec: JsonObject) -> str | None:
     value = spec.get("id")
     if value is None:
         return None
@@ -40,14 +47,32 @@ def spec_id(spec: dict[str, Any]) -> str | None:
     return value
 
 
-def spec_group(spec: dict[str, Any]) -> str:
+def spec_group(spec: JsonObject) -> str:
     group = spec.get("group") or spec.get("id")
     if not isinstance(group, str) or not group:
         raise ValueError("Control-flow action must include non-empty 'id' or 'group'")
     return group
 
 
-def recipe_value(value: Any) -> Any:
+def spec_object(spec: JsonObject, key: str) -> JsonObject:
+    return json_object(spec.get(key) or {}, f"Action field {key!r} must be an object")
+
+
+def spec_count(spec: JsonObject) -> int:
+    count = spec["count"]
+    if not isinstance(count, int):
+        raise UnexpectedJsonError("Action field 'count' must be an integer")
+    return int(count)
+
+
+@dataclass(frozen=True)
+class Comparison:
+    condition: str = "Equals"
+    input_value: JsonValue = None
+    compare_value: JsonValue = None
+
+
+def recipe_value(value: JsonValue) -> ParameterValue:
     if isinstance(value, dict):
         ref = value.get("ref")
         if isinstance(ref, str):
@@ -72,7 +97,7 @@ def comment(text: str, recipe_id: str | None = None) -> Action:
     )
 
 
-def text(value: Any, recipe_id: str | None = None) -> Action:
+def text(value: JsonValue, recipe_id: str | None = None) -> Action:
     return Action(
         identifier="is.workflow.actions.gettext",
         parameters={"WFTextActionText": recipe_value(value)},
@@ -94,8 +119,8 @@ def open_url(recipe_id: str | None = None) -> Action:
     return Action(identifier="is.workflow.actions.openurl", recipe_id=recipe_id)
 
 
-def show_result(value: Any | None = None, recipe_id: str | None = None) -> Action:
-    parameters = {}
+def show_result(value: JsonValue = None, recipe_id: str | None = None) -> Action:
+    parameters: Parameters = {}
     if value is not None:
         parameters["Text"] = recipe_value(value)
     return Action(
@@ -105,8 +130,8 @@ def show_result(value: Any | None = None, recipe_id: str | None = None) -> Actio
     )
 
 
-def set_clipboard(value: Any | None = None, recipe_id: str | None = None) -> Action:
-    parameters = {}
+def set_clipboard(value: JsonValue = None, recipe_id: str | None = None) -> Action:
+    parameters: Parameters = {}
     if value is not None:
         parameters["WFInput"] = recipe_value(value)
     return Action(
@@ -133,11 +158,11 @@ def ask_for_input(
 
 
 def notification(
-    title: Any,
-    body: Any | None = None,
+    title: JsonValue,
+    body: JsonValue = None,
     recipe_id: str | None = None,
 ) -> Action:
-    parameters = {
+    parameters: Parameters = {
         "WFNotificationActionSound": True,
         "WFNotificationActionTitle": text_token_value(recipe_value(title)),
     }
@@ -151,12 +176,13 @@ def notification(
 
 
 def alert(
-    title: Any,
-    message: Any | None = None,
+    title: JsonValue,
+    message: JsonValue = None,
+    *,
     show_cancel: bool = True,
     recipe_id: str | None = None,
 ) -> Action:
-    parameters = {
+    parameters: Parameters = {
         "WFAlertActionTitle": text_token_value(recipe_value(title)),
         "WFAlertActionCancelButtonShown": show_cancel,
     }
@@ -177,7 +203,7 @@ def current_date(recipe_id: str | None = None) -> Action:
     )
 
 
-def dictionary(items: dict[str, Any], recipe_id: str | None = None) -> Action:
+def dictionary(items: JsonObject, recipe_id: str | None = None) -> Action:
     return Action(
         identifier="is.workflow.actions.dictionary",
         parameters={"WFItems": dictionary_field_value(items)},
@@ -186,7 +212,7 @@ def dictionary(items: dict[str, Any], recipe_id: str | None = None) -> Action:
     )
 
 
-def dictionary_field_value(items: dict[str, Any]) -> dict[str, Any]:
+def dictionary_field_value(items: JsonObject) -> Parameters:
     return {
         "Value": {
             "WFDictionaryFieldValueItems": dictionary_items(items),
@@ -195,7 +221,7 @@ def dictionary_field_value(items: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def text_token_value(value: Any) -> dict[str, Any]:
+def text_token_value(value: ParameterValue) -> ParameterValue:
     if isinstance(value, OutputRef):
         return value
     return {
@@ -207,14 +233,14 @@ def text_token_value(value: Any) -> dict[str, Any]:
     }
 
 
-def maybe_text_token(value: Any) -> Any:
-    value = recipe_value(value)
-    if isinstance(value, OutputRef):
-        return text_token_value(value)
-    return value
+def maybe_text_token(value: JsonValue) -> ParameterValue:
+    resolved = recipe_value(value)
+    if isinstance(resolved, OutputRef):
+        return text_token_value(resolved)
+    return resolved
 
 
-def dictionary_items(items: dict[str, Any]) -> list[dict[str, Any]]:
+def dictionary_items(items: JsonObject) -> list[ParameterValue]:
     return [
         {
             "WFItemType": 0,
@@ -227,12 +253,15 @@ def dictionary_items(items: dict[str, Any]) -> list[dict[str, Any]]:
 
 def raw(
     identifier: str,
-    parameters: dict[str, Any] | None = None,
+    parameters: JsonObject | None = None,
     recipe_id: str | None = None,
 ) -> Action:
+    resolved = recipe_value(parameters or {})
+    if not isinstance(resolved, dict):
+        raise UnexpectedJsonError("Raw action 'parameters' must be an object, not a reference")
     return Action(
         identifier=identifier,
-        parameters=recipe_value(parameters or {}),
+        parameters=dict(resolved),
         recipe_id=recipe_id,
     )
 
@@ -240,23 +269,24 @@ def raw(
 def if_start(
     context: ActionContext,
     group: str,
-    condition: str = "Equals",
-    input_value: Any | None = None,
-    compare_value: Any | None = None,
+    comparison: Comparison | None = None,
     recipe_id: str | None = None,
 ) -> Action:
-    parameters: dict[str, Any] = {
+    comparison = comparison or Comparison()
+    parameters: Parameters = {
         "GroupingIdentifier": context.group_identifier(
             group,
             "is.workflow.actions.conditional",
         ),
-        "WFCondition": condition,
+        "WFCondition": comparison.condition,
         "WFControlFlowMode": 0,
     }
-    if input_value is not None:
-        parameters["WFInput"] = recipe_value(input_value)
-    if compare_value is not None:
-        parameters["WFConditionalActionString"] = text_token_value(recipe_value(compare_value))
+    if comparison.input_value is not None:
+        parameters["WFInput"] = recipe_value(comparison.input_value)
+    if comparison.compare_value is not None:
+        parameters["WFConditionalActionString"] = text_token_value(
+            recipe_value(comparison.compare_value)
+        )
     return Action(
         identifier="is.workflow.actions.conditional",
         parameters=parameters,
@@ -310,10 +340,10 @@ def repeat_count(context: ActionContext, group: str, count: int, recipe_id: str 
 def repeat_each(
     context: ActionContext,
     group: str,
-    input_value: Any | None,
+    input_value: JsonValue,
     recipe_id: str | None,
 ) -> Action:
-    parameters: dict[str, Any] = {
+    parameters: Parameters = {
         "GroupingIdentifier": context.group_identifier(
             group,
             "is.workflow.actions.repeat.each",
@@ -344,16 +374,16 @@ def choose_from_menu(
     context: ActionContext,
     group: str,
     items: list[str],
-    prompt: str | None,
+    prompt: JsonValue,
     recipe_id: str | None,
 ) -> Action:
-    parameters: dict[str, Any] = {
+    parameters: Parameters = {
         "GroupingIdentifier": context.group_identifier(
             group,
             "is.workflow.actions.choosefrommenu",
         ),
         "WFControlFlowMode": 0,
-        "WFMenuItems": items,
+        "WFMenuItems": [*items],
     }
     if prompt is not None:
         parameters["WFMenuPrompt"] = prompt
@@ -393,12 +423,12 @@ def end_menu(context: ActionContext, group: str) -> Action:
 
 
 def get_contents_of_url(
-    url_value: Any | None = None,
+    url_value: JsonValue = None,
     method: str = "GET",
-    headers: dict[str, Any] | None = None,
+    headers: JsonObject | None = None,
     recipe_id: str | None = None,
 ) -> Action:
-    parameters: dict[str, Any] = {
+    parameters: Parameters = {
         "ShowHeaders": bool(headers),
         "WFHTTPMethod": method,
     }
@@ -414,8 +444,8 @@ def get_contents_of_url(
     )
 
 
-def get_dictionary_from_input(input_value: Any | None = None, recipe_id: str | None = None) -> Action:
-    parameters = {}
+def get_dictionary_from_input(input_value: JsonValue = None, recipe_id: str | None = None) -> Action:
+    parameters: Parameters = {}
     if input_value is not None:
         parameters["WFInput"] = recipe_value(input_value)
     return Action(
@@ -427,12 +457,12 @@ def get_dictionary_from_input(input_value: Any | None = None, recipe_id: str | N
 
 
 def get_dictionary_value(
-    key: Any,
-    input_value: Any | None = None,
+    key: JsonValue,
+    input_value: JsonValue = None,
     get_type: str = "Value",
     recipe_id: str | None = None,
 ) -> Action:
-    parameters = {
+    parameters: Parameters = {
         "WFDictionaryKey": text_token_value(recipe_value(key)),
         "WFGetDictionaryValueType": get_type,
     }
@@ -447,12 +477,12 @@ def get_dictionary_value(
 
 
 def set_dictionary_value(
-    key: Any,
-    value: Any,
-    input_value: Any | None = None,
+    key: JsonValue,
+    value: JsonValue,
+    input_value: JsonValue = None,
     recipe_id: str | None = None,
 ) -> Action:
-    parameters = {
+    parameters: Parameters = {
         "WFDictionaryKey": text_token_value(recipe_value(key)),
         "WFDictionaryValue": text_token_value(recipe_value(value)),
     }
@@ -466,12 +496,12 @@ def set_dictionary_value(
     )
 
 
-ACTION_FACTORIES = {
+ACTION_FACTORIES: dict[str, Callable[[JsonObject], Action]] = {
     "alert": lambda spec: alert(
         spec["title"],
         spec.get("message"),
-        bool(spec.get("show_cancel", True)),
-        spec_id(spec),
+        show_cancel=bool(spec.get("show_cancel", True)),
+        recipe_id=spec_id(spec),
     ),
     "ask_for_input": lambda spec: ask_for_input(
         str(spec["prompt"]),
@@ -480,11 +510,11 @@ ACTION_FACTORIES = {
     ),
     "comment": lambda spec: comment(str(spec["text"]), spec_id(spec)),
     "current_date": lambda spec: current_date(spec_id(spec)),
-    "dictionary": lambda spec: dictionary(spec.get("items") or {}, spec_id(spec)),
+    "dictionary": lambda spec: dictionary(spec_object(spec, "items"), spec_id(spec)),
     "get_contents_of_url": lambda spec: get_contents_of_url(
         spec.get("url"),
         str(spec.get("method", "GET")),
-        spec.get("headers"),
+        spec_object(spec, "headers"),
         spec_id(spec),
     ),
     "get_dictionary_from_input": lambda spec: get_dictionary_from_input(
@@ -505,7 +535,7 @@ ACTION_FACTORIES = {
     "open_url": lambda spec: open_url(spec_id(spec)),
     "raw": lambda spec: raw(
         str(spec["identifier"]),
-        spec.get("parameters") or {},
+        spec_object(spec, "parameters"),
         spec_id(spec),
     ),
     "set_clipboard": lambda spec: set_clipboard(spec.get("input"), spec_id(spec)),
@@ -520,11 +550,14 @@ ACTION_FACTORIES = {
     "url": lambda spec: url(str(spec["url"]), spec_id(spec)),
 }
 
-CONTEXT_ACTION_FACTORIES = {
+CONTEXT_ACTION_FACTORIES: dict[str, Callable[[JsonObject, ActionContext], Action]] = {
     "choose_from_menu": lambda spec, context: choose_from_menu(
         context,
         spec_group(spec),
-        [str(item) for item in spec["items"]],
+        [
+            str(item)
+            for item in json_array(spec["items"], "Action field 'items' must be an array")
+        ],
         spec.get("prompt"),
         spec_id(spec),
     ),
@@ -534,9 +567,11 @@ CONTEXT_ACTION_FACTORIES = {
     "if": lambda spec, context: if_start(
         context,
         spec_group(spec),
-        str(spec.get("condition", "Equals")),
-        spec.get("input"),
-        spec.get("value"),
+        Comparison(
+            str(spec.get("condition", "Equals")),
+            spec.get("input"),
+            spec.get("value"),
+        ),
         spec_id(spec),
     ),
     "menu_item": lambda spec, context: menu_item(
@@ -548,7 +583,7 @@ CONTEXT_ACTION_FACTORIES = {
     "repeat_count": lambda spec, context: repeat_count(
         context,
         spec_group(spec),
-        int(spec["count"]),
+        spec_count(spec),
         spec_id(spec),
     ),
     "repeat_each": lambda spec, context: repeat_each(
@@ -560,10 +595,10 @@ CONTEXT_ACTION_FACTORIES = {
 }
 
 
-def action_from_recipe(spec: dict[str, Any], context: ActionContext | None = None) -> Action:
+def action_from_recipe(spec: JsonObject, context: ActionContext | None = None) -> Action:
     kind = spec.get("kind")
     if not isinstance(kind, str):
-        raise ValueError("Action is missing string field 'kind'")
+        raise UnexpectedJsonError("Action is missing string field 'kind'")
 
     context = context or ActionContext()
     context_factory = CONTEXT_ACTION_FACTORIES.get(kind)

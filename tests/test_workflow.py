@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import json
 import unittest
+from typing import TYPE_CHECKING
 
 from shortcutgen.actions import (
     ActionContext,
+    Comparison,
     ask_for_input,
     dictionary,
     end_if,
@@ -16,34 +20,59 @@ from shortcutgen.system_intents import catalog_from_intentdefinition
 from shortcutgen.validation import ValidationError, validate_recipe
 from shortcutgen.workflow import Shortcut
 
+if TYPE_CHECKING:
+    from shortcutgen.json_data import JsonValue
+    from shortcutgen.workflow import PlistValue
+
+
+def at(value: PlistValue | JsonValue, *path: str | int) -> PlistValue | JsonValue:
+    for key in path:
+        value = child(value, key)
+    return value
+
+
+def child(value: PlistValue | JsonValue, key: str | int) -> PlistValue | JsonValue:
+    if isinstance(value, list) and isinstance(key, int):
+        return value[key]
+    if isinstance(value, dict):
+        return value[str(key)]
+    raise AssertionError(f"cannot index {value!r} with {key!r}")
+
 
 class WorkflowTests(unittest.TestCase):
-    def test_shortcut_plist_shape(self):
+    def test_shortcut_plist_shape(self) -> None:
         shortcut = Shortcut(name="Example", actions=[text("Hello"), show_result()])
         plist = shortcut.to_plist()
 
         self.assertEqual(plist["WFWorkflowName"], "Example")
         self.assertEqual(
-            plist["WFWorkflowActions"][0]["WFWorkflowActionIdentifier"],
+            at(plist, "WFWorkflowActions", 0, "WFWorkflowActionIdentifier"),
             "is.workflow.actions.gettext",
         )
         self.assertEqual(
-            plist["WFWorkflowActions"][0]["WFWorkflowActionParameters"]["WFTextActionText"],
+            at(plist, "WFWorkflowActions", 0, "WFWorkflowActionParameters", "WFTextActionText"),
             "Hello",
         )
-        self.assertIn("UUID", plist["WFWorkflowActions"][0]["WFWorkflowActionParameters"])
+        self.assertIsNotNone(
+            at(plist, "WFWorkflowActions", 0, "WFWorkflowActionParameters", "UUID")
+        )
         self.assertEqual(
-            plist["WFWorkflowActions"][1]["WFWorkflowActionIdentifier"],
+            at(plist, "WFWorkflowActions", 1, "WFWorkflowActionIdentifier"),
             "is.workflow.actions.showresult",
         )
         self.assertEqual(
-            plist["WFWorkflowActions"][1]["WFWorkflowActionParameters"]["Text"][
-                "WFSerializationType"
-            ],
+            at(
+                plist,
+                "WFWorkflowActions",
+                1,
+                "WFWorkflowActionParameters",
+                "Text",
+                "WFSerializationType",
+            ),
             "WFTextTokenString",
         )
 
-    def test_explicit_action_reference(self):
+    def test_explicit_action_reference(self) -> None:
         shortcut = Shortcut(
             name="Reference",
             actions=[
@@ -53,56 +82,56 @@ class WorkflowTests(unittest.TestCase):
         )
 
         plist = shortcut.to_plist()
-        answer_uuid = plist["WFWorkflowActions"][0]["WFWorkflowActionParameters"]["UUID"]
-        body = plist["WFWorkflowActions"][1]["WFWorkflowActionParameters"][
-            "WFNotificationActionBody"
-        ]
+        answer_uuid = at(plist, "WFWorkflowActions", 0, "WFWorkflowActionParameters", "UUID")
+        body = at(
+            plist, "WFWorkflowActions", 1, "WFWorkflowActionParameters", "WFNotificationActionBody"
+        )
 
-        self.assertEqual(body["WFSerializationType"], "WFTextTokenString")
+        self.assertEqual(at(body, "WFSerializationType"), "WFTextTokenString")
         self.assertEqual(
-            body["Value"]["attachmentsByRange"]["{0, 1}"]["OutputUUID"],
+            at(body, "Value", "attachmentsByRange", "{0, 1}", "OutputUUID"),
             answer_uuid,
         )
         self.assertEqual(
-            body["Value"]["attachmentsByRange"]["{0, 1}"]["OutputName"],
+            at(body, "Value", "attachmentsByRange", "{0, 1}", "OutputName"),
             "Provided Input",
         )
 
-    def test_dictionary_action_shape(self):
+    def test_dictionary_action_shape(self) -> None:
         shortcut = Shortcut(
             name="Dictionary",
             actions=[dictionary({"source": "Shorthand"}, recipe_id="payload")],
         )
 
-        wf_items = shortcut.to_plist()["WFWorkflowActions"][0]["WFWorkflowActionParameters"][
-            "WFItems"
-        ]
+        wf_items = at(
+            shortcut.to_plist(), "WFWorkflowActions", 0, "WFWorkflowActionParameters", "WFItems"
+        )
 
-        self.assertEqual(wf_items["WFSerializationType"], "WFDictionaryFieldValue")
+        self.assertEqual(at(wf_items, "WFSerializationType"), "WFDictionaryFieldValue")
         self.assertEqual(
-            wf_items["Value"]["WFDictionaryFieldValueItems"][0]["WFKey"],
+            at(wf_items, "Value", "WFDictionaryFieldValueItems", 0, "WFKey"),
             "source",
         )
 
-    def test_control_flow_group_identifier_is_shared(self):
+    def test_control_flow_group_identifier_is_shared(self) -> None:
         context = ActionContext()
         shortcut = Shortcut(
             name="If",
             actions=[
-                if_start(context, "condition", condition="Equals", recipe_id="condition"),
+                if_start(context, "condition", Comparison("Equals"), recipe_id="condition"),
                 end_if(context, "condition"),
             ],
         )
 
         actions = shortcut.to_plist()["WFWorkflowActions"]
-        start = actions[0]["WFWorkflowActionParameters"]
-        end = actions[1]["WFWorkflowActionParameters"]
+        start = at(actions, 0, "WFWorkflowActionParameters")
+        end = at(actions, 1, "WFWorkflowActionParameters")
 
-        self.assertEqual(start["GroupingIdentifier"], end["GroupingIdentifier"])
-        self.assertEqual(start["WFControlFlowMode"], 0)
-        self.assertEqual(end["WFControlFlowMode"], 2)
+        self.assertEqual(at(start, "GroupingIdentifier"), at(end, "GroupingIdentifier"))
+        self.assertEqual(at(start, "WFControlFlowMode"), 0)
+        self.assertEqual(at(end, "WFControlFlowMode"), 2)
 
-    def test_validation_rejects_unknown_refs(self):
+    def test_validation_rejects_unknown_refs(self) -> None:
         with self.assertRaises(ValidationError):
             validate_recipe(
                 {
@@ -118,7 +147,7 @@ class WorkflowTests(unittest.TestCase):
                 }
             )
 
-    def test_validation_accepts_earlier_refs(self):
+    def test_validation_accepts_earlier_refs(self) -> None:
         validate_recipe(
             {
                 "name": "Valid",
@@ -138,7 +167,7 @@ class WorkflowTests(unittest.TestCase):
             }
         )
 
-    def test_validation_rejects_unsupported_recipe_for_compilation(self):
+    def test_validation_rejects_unsupported_recipe_for_compilation(self) -> None:
         with self.assertRaises(ValidationError) as context:
             validate_recipe(
                 {
@@ -156,7 +185,7 @@ class WorkflowTests(unittest.TestCase):
 
         self.assertIn("must not be compiled", str(context.exception))
 
-    def test_model_response_accepts_unsupported_state(self):
+    def test_model_response_accepts_unsupported_state(self) -> None:
         response = parse_model_response(
             json.dumps(
                 {
@@ -176,18 +205,18 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(response.unsupported)
         self.assertEqual(response.reason, "Needs a Photos action.")
 
-    def test_model_response_rejects_markdown(self):
+    def test_model_response_rejects_markdown(self) -> None:
         with self.assertRaisesRegex(ValueError, "no Markdown"):
-            parse_model_response("```json\n{\"name\":\"Nope\"}\n```")
+            parse_model_response('```json\n{"name":"Nope"}\n```')
 
-    def test_prompt_contains_request_and_supported_actions(self):
+    def test_prompt_contains_request_and_supported_actions(self) -> None:
         prompt = build_prompt("Ask for a note and copy it to the clipboard")
 
         self.assertIn("Ask for a note and copy it to the clipboard", prompt)
         self.assertIn('"ask_for_input"', prompt)
         self.assertIn('"set_clipboard"', prompt)
 
-    def test_system_intent_catalog_compacts_intentdefinition(self):
+    def test_system_intent_catalog_compacts_intentdefinition(self) -> None:
         catalog = catalog_from_intentdefinition(
             {
                 "INIntentDefinitionNamespace": "example",
@@ -230,9 +259,9 @@ class WorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(catalog["intent_count"], 1)
-        intent = catalog["intents"][0]
-        self.assertEqual(intent["name"], "SetWiFi")
-        self.assertEqual(intent["parameters"][0]["enum_values"][0]["name"], "set")
+        intent = at(catalog, "intents", 0)
+        self.assertEqual(at(intent, "name"), "SetWiFi")
+        self.assertEqual(at(intent, "parameters", 0, "enum_values", 0, "name"), "set")
 
 
 if __name__ == "__main__":

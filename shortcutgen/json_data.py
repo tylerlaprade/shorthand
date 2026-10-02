@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 JsonValue = Union[dict[str, "JsonValue"], list["JsonValue"], str, int, float, bool, None]
 JsonObject = dict[str, JsonValue]
 
+# json.loads is typed to return Any; this is the one boundary that declares its result plain JSON.
 parse_json: Callable[[str], JsonValue] = json.loads
 
 

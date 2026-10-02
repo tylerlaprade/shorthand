@@ -1,5 +1,6 @@
 {
   "extends": "../../.config/basedpyright/pyrightconfig.json",
   "include": ["shortcutgen", "tests"],
+  // The Mac app runs the compiler with Apple's /usr/bin/python3, which is 3.9.
   "pythonVersion": "3.9"
 }
